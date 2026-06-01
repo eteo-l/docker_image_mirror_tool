@@ -1,0 +1,18 @@
+[Unit]
+Description=Docker Image Mirror Tool API
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/docker_image_mirror_tool
+Environment=PYTHONUNBUFFERED=1
+Environment=IMAGE_STORAGE_DIR=/opt/docker_image_mirror_tool/images
+ExecStart=/opt/docker_image_mirror_tool/venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
