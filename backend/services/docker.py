@@ -43,6 +43,10 @@ class DiskSpaceError(RuntimeError):
     """Raised when there is not enough disk space to save an image."""
 
 
+class ArchiveStorageLimitError(RuntimeError):
+    """Raised when saved image archives would exceed the configured storage limit."""
+
+
 class TaskNotCancellableError(RuntimeError):
     """Raised when attempting to cancel a task that is no longer cancellable."""
 
@@ -95,6 +99,7 @@ def submit_pull_task(image: str) -> PullImageAcceptedResponse:
         raise InvalidImageNameError(
             "Invalid Docker image name. Example format: nginx:latest"
         )
+    _ensure_archive_capacity_for_submission()
 
     task_id = uuid4().hex
     task = TaskRecord(task_id=task_id, image=normalized_image, status="pending")
@@ -209,6 +214,10 @@ async def _pull_and_save_image(task: TaskRecord) -> None:
         task.status = "failed"
         task.error = str(exc)
         _append_log(task, task.error)
+    except ArchiveStorageLimitError as exc:
+        task.status = "failed"
+        task.error = str(exc)
+        _append_log(task, task.error)
     except DockerCommandError as exc:
         task.status = "failed"
         task.error = _format_docker_command_error(task.image, exc)
@@ -235,6 +244,7 @@ async def _pull_and_save_image(task: TaskRecord) -> None:
 
 async def _ensure_sufficient_disk_space(image: str, task: TaskRecord) -> None:
     size_bytes = await _inspect_image_size(image, task)
+    _ensure_archive_capacity_for_save(size_bytes)
     free_bytes = shutil.disk_usage(ensure_images_dir()).free
     safety_buffer = 50 * 1024 * 1024
     required_bytes = size_bytes + safety_buffer
@@ -425,6 +435,43 @@ def resolve_image_archive(filename: str) -> Path:
 def delete_image_archive(filename: str) -> None:
     archive_path = resolve_image_archive(filename)
     archive_path.unlink(missing_ok=False)
+
+
+def _ensure_archive_capacity_for_submission() -> None:
+    current_usage = _get_saved_archive_bytes()
+    limit_bytes = settings.archive_storage_limit_bytes
+
+    if current_usage >= limit_bytes:
+        raise ArchiveStorageLimitError(
+            "Saved image archive storage is full. "
+            f"Current usage {_format_bytes(current_usage)} of {_format_bytes(limit_bytes)}. "
+            "Delete saved archives and try again."
+        )
+
+
+def _ensure_archive_capacity_for_save(archive_size_bytes: int) -> None:
+    current_usage = _get_saved_archive_bytes()
+    safety_buffer = 50 * 1024 * 1024
+    required_bytes = current_usage + archive_size_bytes + safety_buffer
+    limit_bytes = settings.archive_storage_limit_bytes
+
+    if required_bytes > limit_bytes:
+        raise ArchiveStorageLimitError(
+            "Saving this image would exceed the archive storage limit. "
+            f"Current usage {_format_bytes(current_usage)}, "
+            f"required about {_format_bytes(required_bytes)}, "
+            f"limit {_format_bytes(limit_bytes)}. "
+            "Delete saved archives and try again."
+        )
+
+
+def _get_saved_archive_bytes() -> int:
+    image_dir = ensure_images_dir()
+    return sum(
+        path.stat().st_size
+        for path in image_dir.glob("*.tar")
+        if path.is_file()
+    )
 
 
 def _has_active_execution_slot() -> bool:

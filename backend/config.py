@@ -11,6 +11,7 @@ class Settings:
     docker_binary: str
     download_chunk_size: int
     max_task_log_lines: int
+    archive_storage_limit_bytes: int
 
 
 def _build_settings() -> Settings:
@@ -18,12 +19,16 @@ def _build_settings() -> Settings:
     docker_binary = os.getenv("DOCKER_BIN", "docker")
     download_chunk_size = int(os.getenv("DOWNLOAD_CHUNK_SIZE", str(1024 * 1024)))
     max_task_log_lines = int(os.getenv("MAX_TASK_LOG_LINES", "500"))
+    archive_storage_limit_bytes = int(
+        os.getenv("ARCHIVE_STORAGE_LIMIT_BYTES", str(20 * 1024 * 1024 * 1024))
+    )
 
     return Settings(
         images_dir=images_dir,
         docker_binary=docker_binary,
         download_chunk_size=download_chunk_size,
         max_task_log_lines=max_task_log_lines,
+        archive_storage_limit_bytes=archive_storage_limit_bytes,
     )
 
 

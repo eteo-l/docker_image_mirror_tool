@@ -16,6 +16,7 @@ from backend.models import (
     PullImageRequest,
 )
 from backend.services.docker import (
+    ArchiveStorageLimitError,
     InvalidImageNameError,
     delete_image_archive,
     list_saved_images,
@@ -36,6 +37,8 @@ async def pull_image(request: PullImageRequest) -> PullImageAcceptedResponse:
         return submit_pull_task(request.image)
     except InvalidImageNameError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ArchiveStorageLimitError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.get("", response_model=ImageListResponse)
