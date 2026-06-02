@@ -296,6 +296,7 @@ function renderTasks() {
 
 function renderTaskCard(task) {
   const statusClass = `status-${task.status}`;
+  const statusLabel = getTaskStatusLabel(task.status);
   const logs = Array.isArray(task.logs) && task.logs.length > 0
     ? escapeHtml(task.logs.join("\n"))
     : "暂无日志输出。";
@@ -308,11 +309,11 @@ function renderTaskCard(task) {
   const observedAt = task.observed_at
     ? formatDateTime(task.observed_at)
     : "刚刚";
-  const actionBlock = task.status === "running"
+  const actionBlock = task.status === "running" || task.status === "pending"
     ? `
       <div class="task-actions">
         <button class="danger-button" type="button" data-cancel-task-id="${escapeHtml(task.task_id)}">
-          取消当前任务
+          ${escapeHtml(task.status === "running" ? "取消当前任务" : "取消排队任务")}
         </button>
       </div>
     `
@@ -328,7 +329,7 @@ function renderTaskCard(task) {
             <span>最近更新 ${escapeHtml(observedAt)}</span>
           </div>
         </div>
-        <span class="status-badge ${statusClass}">${escapeHtml(task.status)}</span>
+        <span class="status-badge ${statusClass}">${escapeHtml(statusLabel)}</span>
       </div>
       ${filenameBlock}
       ${errorBlock}
@@ -370,7 +371,7 @@ function renderCancelledTaskCard(task) {
             <span>最近更新 ${escapeHtml(observedAt)}</span>
           </div>
         </div>
-        <span class="status-badge status-cancelled">cancelled</span>
+        <span class="status-badge status-cancelled">已取消</span>
       </div>
       <div class="task-actions">
         <button class="secondary-button" type="button" data-delete-task-id="${escapeHtml(task.task_id)}">
@@ -469,7 +470,9 @@ function bindTaskActions() {
       }
 
       const confirmed = window.confirm(
-        `确认取消当前任务 ${task.image} 吗？系统会尝试终止 Docker 进程并删除本地镜像与未完成归档。`,
+        task.status === "running"
+          ? `确认取消当前任务 ${task.image} 吗？系统会尝试终止 Docker 进程并删除本地镜像与未完成归档。`
+          : `确认取消排队任务 ${task.image} 吗？任务记录会保留为已取消。`,
       );
       if (!confirmed) {
         return;
@@ -522,6 +525,23 @@ function bindTaskActions() {
       }
     });
   });
+}
+
+function getTaskStatusLabel(status) {
+  switch (status) {
+    case "pending":
+      return "排队中";
+    case "running":
+      return "进行中";
+    case "success":
+      return "成功";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "已取消";
+    default:
+      return status;
+  }
 }
 
 async function apiFetch(path, options = {}) {

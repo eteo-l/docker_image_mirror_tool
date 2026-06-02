@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import shutil
+import threading
 from asyncio.subprocess import PIPE
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,7 @@ from backend.models import (
 )
 
 TASKS: dict[str, "TaskRecord"] = {}
+SCHEDULER_LOCK = threading.Lock()
 
 IMAGE_NAME_RE = re.compile(
     r"^(?=.{1,255}$)"
@@ -41,8 +43,8 @@ class DiskSpaceError(RuntimeError):
     """Raised when there is not enough disk space to save an image."""
 
 
-class TaskNotRunningError(RuntimeError):
-    """Raised when attempting to cancel a task that is not running."""
+class TaskNotCancellableError(RuntimeError):
+    """Raised when attempting to cancel a task that is no longer cancellable."""
 
 
 class TaskDeleteNotAllowedError(RuntimeError):
@@ -98,7 +100,9 @@ def submit_pull_task(image: str) -> PullImageAcceptedResponse:
     task = TaskRecord(task_id=task_id, image=normalized_image, status="pending")
     _append_log(task, f"Task accepted for image '{normalized_image}'.")
     TASKS[task_id] = task
-    task.runner_task = asyncio.create_task(_pull_and_save_image(task))
+    if _has_active_execution_slot():
+        _append_log(task, "Queued. Waiting for the current task to finish.")
+    _schedule_next_pending_task()
 
     return PullImageAcceptedResponse(
         task_id=task_id,
@@ -120,16 +124,23 @@ def get_task_status(task_id: str) -> TaskStatusResponse:
     )
 
 
-async def cancel_running_task(task_id: str) -> TaskStatusResponse:
+async def cancel_task(task_id: str) -> TaskStatusResponse:
     task = _get_task(task_id)
-    if task.status != "running":
-        raise TaskNotRunningError("Only running tasks can be cancelled.")
+    if task.status not in {"pending", "running"}:
+        raise TaskNotCancellableError("Only pending or running tasks can be cancelled.")
 
     if task.cancel_requested:
         return get_task_status(task_id)
 
     task.cancel_requested = True
     _append_log(task, "Cancellation requested by user.")
+
+    if task.status == "pending" and (task.runner_task is None or task.runner_task.done()):
+        task.status = "cancelled"
+        task.error = None
+        _append_log(task, "Task was cancelled before execution started.")
+        _schedule_next_pending_task()
+        return get_task_status(task_id)
 
     process = task.current_process
     if process is not None and process.returncode is None:
@@ -219,6 +230,7 @@ async def _pull_and_save_image(task: TaskRecord) -> None:
         task.current_step = None
         if task.status != "success" and output_path is not None:
             output_path.unlink(missing_ok=True)
+        _schedule_next_pending_task()
 
 
 async def _ensure_sufficient_disk_space(image: str, task: TaskRecord) -> None:
@@ -413,6 +425,36 @@ def resolve_image_archive(filename: str) -> Path:
 def delete_image_archive(filename: str) -> None:
     archive_path = resolve_image_archive(filename)
     archive_path.unlink(missing_ok=False)
+
+
+def _has_active_execution_slot() -> bool:
+    return any(
+        task.runner_task is not None
+        and not task.runner_task.done()
+        and task.status in {"pending", "running"}
+        for task in TASKS.values()
+    )
+
+
+def _schedule_next_pending_task() -> None:
+    with SCHEDULER_LOCK:
+        if _has_active_execution_slot():
+            return
+
+        next_task = next(
+            (
+                task
+                for task in TASKS.values()
+                if task.status == "pending"
+                and not task.cancel_requested
+                and (task.runner_task is None or task.runner_task.done())
+            ),
+            None,
+        )
+        if next_task is None:
+            return
+
+        next_task.runner_task = asyncio.create_task(_pull_and_save_image(next_task))
 
 
 def _get_task(task_id: str) -> TaskRecord:

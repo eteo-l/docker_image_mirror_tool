@@ -5,9 +5,9 @@ from fastapi import APIRouter, HTTPException, status
 from backend.models import DeleteTaskResponse, TaskStatusResponse
 from backend.services.docker import (
     TaskDeleteNotAllowedError,
+    TaskNotCancellableError,
     TaskNotFoundError,
-    TaskNotRunningError,
-    cancel_running_task,
+    cancel_task as cancel_task_record,
     delete_cancelled_task,
     get_task_status,
 )
@@ -27,15 +27,15 @@ async def get_task(task_id: str) -> TaskStatusResponse:
 
 
 @router.post("/{task_id}/cancel", response_model=TaskStatusResponse)
-async def cancel_task(task_id: str) -> TaskStatusResponse:
+async def cancel_task_route(task_id: str) -> TaskStatusResponse:
     try:
-        return await cancel_running_task(task_id)
+        return await cancel_task_record(task_id)
     except TaskNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task '{task_id}' was not found.",
         ) from exc
-    except TaskNotRunningError as exc:
+    except TaskNotCancellableError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
