@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docker Image Mirror Tool</title>
+  <meta
+    name="description"
+    content="Pull Docker images, track export tasks, and manage saved archives from one browser-based control room."
+  >
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <div class="aurora aurora-left"></div>
+    <div class="aurora aurora-right"></div>
+
+    <header class="hero panel panel-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Docker Image Mirror Tool</p>
+        <h1>镜像拉取、归档、下载，一页完成。</h1>
+        <p class="hero-text">
+          面向运维工具的前端控制台。提交镜像拉取任务，实时查看执行日志，并管理已保存的 tar 归档。
+        </p>
+      </div>
+      <div class="hero-metrics">
+        <div class="metric-card">
+          <span class="metric-label">API 目标</span>
+          <strong id="api-endpoint">检测中</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">连接状态</span>
+          <strong id="connection-status">检测中</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">归档总量</span>
+          <strong id="archive-total-size">0 B</strong>
+        </div>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="panel panel-form" aria-labelledby="pull-panel-title">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">任务入口</p>
+            <h2 id="pull-panel-title">发起新镜像任务</h2>
+          </div>
+          <button id="refresh-all-button" class="ghost-button" type="button">刷新全部</button>
+        </div>
+
+        <form id="pull-form" class="pull-form">
+          <label class="field-group" for="image-input">
+            <span class="field-label">镜像名</span>
+            <input
+              id="image-input"
+              name="image"
+              type="text"
+              placeholder="例如 nginx:latest 或 ghcr.io/org/app:1.2.3"
+              autocomplete="off"
+              required
+            >
+          </label>
+
+          <div class="helper-strip">
+            <span>快捷示例</span>
+            <div class="chip-row">
+              <button class="chip" type="button" data-image="hello-world">hello-world</button>
+              <button class="chip" type="button" data-image="nginx:latest">nginx:latest</button>
+              <button class="chip" type="button" data-image="redis:7">redis:7</button>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button id="submit-button" class="primary-button" type="submit">开始拉取</button>
+            <p id="form-hint" class="form-hint">
+              提交后会自动轮询任务状态。成功任务会自动刷新归档列表。
+            </p>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel panel-summary" aria-labelledby="summary-title">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">任务概览</p>
+            <h2 id="summary-title">最近任务状态</h2>
+          </div>
+        </div>
+
+        <div class="summary-grid">
+          <article class="summary-card">
+            <span class="summary-label">总任务</span>
+            <strong id="summary-total">0</strong>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">运行中</span>
+            <strong id="summary-running">0</strong>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">成功</span>
+            <strong id="summary-success">0</strong>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">失败</span>
+            <strong id="summary-failed">0</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel panel-tasks" aria-labelledby="tasks-title">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">执行追踪</p>
+            <h2 id="tasks-title">最近任务</h2>
+          </div>
+        </div>
+        <div id="task-list" class="task-list empty-state-host"></div>
+      </section>
+
+      <section class="panel panel-images" aria-labelledby="images-title">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">归档管理</p>
+            <h2 id="images-title">已保存镜像</h2>
+          </div>
+          <button id="refresh-images-button" class="ghost-button" type="button">刷新列表</button>
+        </div>
+
+        <div class="images-toolbar">
+          <div>
+            <strong id="archive-count">0</strong>
+            <span> 个归档</span>
+          </div>
+          <div id="last-image-refresh" class="subtle-text">尚未刷新</div>
+        </div>
+
+        <div id="image-list" class="image-list empty-state-host"></div>
+      </section>
+    </main>
+
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
