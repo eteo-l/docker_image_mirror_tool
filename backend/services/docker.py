@@ -41,6 +41,18 @@ class DiskSpaceError(RuntimeError):
     """Raised when there is not enough disk space to save an image."""
 
 
+class TaskNotRunningError(RuntimeError):
+    """Raised when attempting to cancel a task that is not running."""
+
+
+class TaskDeleteNotAllowedError(RuntimeError):
+    """Raised when a task record cannot be deleted in its current state."""
+
+
+class TaskCancelledError(RuntimeError):
+    """Raised when a running task is cancelled by the user."""
+
+
 class DockerCommandError(RuntimeError):
     def __init__(
         self,
@@ -66,6 +78,13 @@ class TaskRecord:
     filename: str | None = None
     error: str | None = None
     logs: list[str] = field(default_factory=list)
+    runner_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    current_process: asyncio.subprocess.Process | None = field(
+        default=None,
+        repr=False,
+    )
+    current_step: str | None = field(default=None, repr=False)
+    cancel_requested: bool = field(default=False, repr=False)
 
 
 def submit_pull_task(image: str) -> PullImageAcceptedResponse:
@@ -79,7 +98,7 @@ def submit_pull_task(image: str) -> PullImageAcceptedResponse:
     task = TaskRecord(task_id=task_id, image=normalized_image, status="pending")
     _append_log(task, f"Task accepted for image '{normalized_image}'.")
     TASKS[task_id] = task
-    asyncio.create_task(_pull_and_save_image(task))
+    task.runner_task = asyncio.create_task(_pull_and_save_image(task))
 
     return PullImageAcceptedResponse(
         task_id=task_id,
@@ -89,9 +108,7 @@ def submit_pull_task(image: str) -> PullImageAcceptedResponse:
 
 
 def get_task_status(task_id: str) -> TaskStatusResponse:
-    task = TASKS.get(task_id)
-    if task is None:
-        raise TaskNotFoundError(task_id)
+    task = _get_task(task_id)
 
     return TaskStatusResponse(
         task_id=task.task_id,
@@ -103,20 +120,59 @@ def get_task_status(task_id: str) -> TaskStatusResponse:
     )
 
 
+async def cancel_running_task(task_id: str) -> TaskStatusResponse:
+    task = _get_task(task_id)
+    if task.status != "running":
+        raise TaskNotRunningError("Only running tasks can be cancelled.")
+
+    if task.cancel_requested:
+        return get_task_status(task_id)
+
+    task.cancel_requested = True
+    _append_log(task, "Cancellation requested by user.")
+
+    process = task.current_process
+    if process is not None and process.returncode is None:
+        await _terminate_process(task, process)
+
+    if task.runner_task is not None:
+        await task.runner_task
+
+    return get_task_status(task_id)
+
+
+def delete_cancelled_task(task_id: str) -> None:
+    task = _get_task(task_id)
+    if task.status != "cancelled":
+        raise TaskDeleteNotAllowedError(
+            "Only cancelled task records can be deleted."
+        )
+
+    if task.runner_task is not None and not task.runner_task.done():
+        raise TaskDeleteNotAllowedError(
+            "The cancelled task is still cleaning up on the server."
+        )
+
+    TASKS.pop(task_id, None)
+
+
 async def _pull_and_save_image(task: TaskRecord) -> None:
     task.status = "running"
     output_path: Path | None = None
 
     try:
+        _raise_if_cancel_requested(task)
         _append_log(task, "Running docker pull.")
         await _run_command(
             [settings.docker_binary, "pull", task.image],
             task=task,
             step_name="pull",
         )
+        _raise_if_cancel_requested(task)
 
         output_path = _reserve_output_path(task.image, task.task_id)
         await _ensure_sufficient_disk_space(task.image, task)
+        _raise_if_cancel_requested(task)
 
         _append_log(task, f"Saving image archive to '{output_path.name}'.")
         await _run_command(
@@ -124,10 +180,16 @@ async def _pull_and_save_image(task: TaskRecord) -> None:
             task=task,
             step_name="save",
         )
+        _raise_if_cancel_requested(task)
 
         task.filename = output_path.name
         task.status = "success"
         _append_log(task, f"Image saved successfully as '{output_path.name}'.")
+    except TaskCancelledError as exc:
+        task.status = "cancelled"
+        task.error = None
+        _append_log(task, str(exc))
+        await _remove_cancelled_local_image(task)
     except InvalidImageNameError as exc:
         task.status = "failed"
         task.error = str(exc)
@@ -153,6 +215,8 @@ async def _pull_and_save_image(task: TaskRecord) -> None:
         task.logs.append(traceback.format_exc())
         _append_log(task, task.error)
     finally:
+        task.current_process = None
+        task.current_step = None
         if task.status != "success" and output_path is not None:
             output_path.unlink(missing_ok=True)
 
@@ -198,24 +262,38 @@ async def _run_command(
     *,
     task: TaskRecord,
     step_name: str,
+    ignore_cancel_request: bool = False,
 ) -> tuple[str, str]:
+    if task.cancel_requested and not ignore_cancel_request:
+        raise TaskCancelledError("Task was cancelled before the next Docker step started.")
+
     process = await asyncio.create_subprocess_exec(
         *command,
         stdout=PIPE,
         stderr=PIPE,
     )
+    task.current_process = process
+    task.current_step = step_name
 
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
 
-    await asyncio.gather(
-        _read_stream(process.stdout, stdout_lines, task, step_name),
-        _read_stream(process.stderr, stderr_lines, task, step_name),
-    )
-    return_code = await process.wait()
+    try:
+        await asyncio.gather(
+            _read_stream(process.stdout, stdout_lines, task, step_name),
+            _read_stream(process.stderr, stderr_lines, task, step_name),
+        )
+        return_code = await process.wait()
+    finally:
+        if task.current_process is process:
+            task.current_process = None
+            task.current_step = None
 
     stdout = "\n".join(stdout_lines).strip()
     stderr = "\n".join(stderr_lines).strip()
+
+    if task.cancel_requested and not ignore_cancel_request:
+        raise TaskCancelledError("Task was cancelled by the user.")
 
     if return_code != 0:
         raise DockerCommandError(command, return_code, stdout, stderr)
@@ -335,6 +413,61 @@ def resolve_image_archive(filename: str) -> Path:
 def delete_image_archive(filename: str) -> None:
     archive_path = resolve_image_archive(filename)
     archive_path.unlink(missing_ok=False)
+
+
+def _get_task(task_id: str) -> TaskRecord:
+    task = TASKS.get(task_id)
+    if task is None:
+        raise TaskNotFoundError(task_id)
+    return task
+
+
+def _raise_if_cancel_requested(task: TaskRecord) -> None:
+    if task.cancel_requested:
+        raise TaskCancelledError("Task was cancelled by the user.")
+
+
+async def _terminate_process(
+    task: TaskRecord,
+    process: asyncio.subprocess.Process,
+) -> None:
+    step_name = task.current_step or "command"
+    _append_log(task, f"Stopping active docker {step_name} command.")
+
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
+
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5)
+    except TimeoutError:
+        _append_log(task, f"Docker {step_name} did not exit in time; killing it.")
+        process.kill()
+        await process.wait()
+
+
+async def _remove_cancelled_local_image(task: TaskRecord) -> None:
+    _append_log(task, f"Removing local Docker image '{task.image}' from the server.")
+
+    try:
+        await _run_command(
+            [settings.docker_binary, "image", "rm", "-f", task.image],
+            task=task,
+            step_name="cleanup",
+            ignore_cancel_request=True,
+        )
+        _append_log(task, f"Removed local Docker image '{task.image}'.")
+    except DockerCommandError as exc:
+        _append_log(
+            task,
+            f"Could not remove local Docker image '{task.image}': {exc}",
+        )
+    except FileNotFoundError:
+        _append_log(
+            task,
+            f"Docker executable '{settings.docker_binary}' was not found while removing the local image.",
+        )
 
 
 def _image_to_filename_base(image: str) -> str:

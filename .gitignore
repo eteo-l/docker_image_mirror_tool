@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Runtime image archives and large generated downloads
+/images/*
+!/images/.gitkeep

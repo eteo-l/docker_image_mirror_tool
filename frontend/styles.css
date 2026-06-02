@@ -22,6 +22,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html {
   color-scheme: dark;
 }
@@ -190,6 +194,12 @@ a {
 .panel-tasks {
   grid-column: 1 / 2;
   animation-delay: 140ms;
+}
+
+.panel-cancelled {
+  grid-column: 1 / 2;
+  padding: 24px;
+  animation-delay: 180ms;
 }
 
 .panel-images {
@@ -383,6 +393,7 @@ a.ghost-button {
 .task-head,
 .image-head,
 .task-row,
+.task-actions,
 .image-actions {
   display: flex;
   align-items: center;
@@ -407,6 +418,12 @@ a.ghost-button {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 14px;
+}
+
+.task-actions,
+.image-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 .status-badge {
@@ -441,6 +458,11 @@ a.ghost-button {
 .status-success {
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+.status-cancelled {
+  color: #ffbe7a;
+  background: rgba(255, 190, 122, 0.12);
 }
 
 .status-failed {
@@ -484,11 +506,6 @@ a.ghost-button {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: "Consolas", "Cascadia Mono", monospace;
-}
-
-.image-actions {
-  flex-wrap: wrap;
-  justify-content: flex-start;
 }
 
 .toast-region {

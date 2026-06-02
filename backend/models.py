@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-TaskState = Literal["pending", "running", "success", "failed"]
+TaskState = Literal["pending", "running", "success", "failed", "cancelled"]
 
 
 class PullImageRequest(BaseModel):
@@ -31,6 +31,11 @@ class ImageListResponse(BaseModel):
 
 class DeleteImageResponse(BaseModel):
     filename: str
+    deleted: bool
+
+
+class DeleteTaskResponse(BaseModel):
+    task_id: str
     deleted: bool
 
 

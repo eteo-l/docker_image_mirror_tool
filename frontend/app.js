@@ -23,6 +23,8 @@ const elements = {
   refreshAllButton: document.querySelector("#refresh-all-button"),
   refreshImagesButton: document.querySelector("#refresh-images-button"),
   taskList: document.querySelector("#task-list"),
+  cancelledTasksPanel: document.querySelector("#cancelled-tasks-panel"),
+  cancelledTaskList: document.querySelector("#cancelled-task-list"),
   imageList: document.querySelector("#image-list"),
   toastRegion: document.querySelector("#toast-region"),
   summaryTotal: document.querySelector("#summary-total"),
@@ -224,6 +226,9 @@ async function pollSingleTask(taskId, notifyOnError = true) {
       if (response.status === "success") {
         pushToast("任务完成", `镜像 ${response.image} 已生成归档。`, "success");
         await refreshImages();
+      } else if (response.status === "cancelled") {
+        pushToast("任务已取消", `镜像 ${response.image} 已停止处理并清理本地产物。`, "success");
+        await refreshImages();
       } else if (response.status === "failed") {
         pushToast("任务失败", response.error || "后端返回失败状态。", "error");
       }
@@ -231,6 +236,12 @@ async function pollSingleTask(taskId, notifyOnError = true) {
 
     renderTasks();
   } catch (error) {
+    if (error.message.includes("was not found")) {
+      removeTask(taskId);
+      renderTasks();
+      return;
+    }
+
     if (notifyOnError) {
       pushToast("任务状态获取失败", error.message, "error");
     }
@@ -244,12 +255,19 @@ function upsertTask(task) {
   persistTasks();
 }
 
+function removeTask(taskId) {
+  rootState.tasks = rootState.tasks.filter((item) => item.task_id !== taskId);
+  persistTasks();
+}
+
 function renderApiTarget() {
   elements.apiEndpoint.textContent = rootState.apiBaseUrl || window.location.origin;
 }
 
 function renderTasks() {
-  const tasks = rootState.tasks;
+  const tasks = rootState.tasks.filter((task) => task.status !== "cancelled");
+  const cancelledTasks = rootState.tasks.filter((task) => task.status === "cancelled");
+
   elements.summaryTotal.textContent = String(tasks.length);
   elements.summaryRunning.textContent = String(
     tasks.filter((task) => task.status === "pending" || task.status === "running").length,
@@ -268,10 +286,12 @@ function renderTasks() {
         <p>输入镜像名后提交，最近任务会在这里持续显示。</p>
       </div>
     `;
-    return;
+  } else {
+    elements.taskList.innerHTML = tasks.map(renderTaskCard).join("");
   }
 
-  elements.taskList.innerHTML = tasks.map(renderTaskCard).join("");
+  renderCancelledTasks(cancelledTasks);
+  bindTaskActions();
 }
 
 function renderTaskCard(task) {
@@ -288,6 +308,15 @@ function renderTaskCard(task) {
   const observedAt = task.observed_at
     ? formatDateTime(task.observed_at)
     : "刚刚";
+  const actionBlock = task.status === "running"
+    ? `
+      <div class="task-actions">
+        <button class="danger-button" type="button" data-cancel-task-id="${escapeHtml(task.task_id)}">
+          取消当前任务
+        </button>
+      </div>
+    `
+    : "";
 
   return `
     <article class="task-card">
@@ -303,7 +332,52 @@ function renderTaskCard(task) {
       </div>
       ${filenameBlock}
       ${errorBlock}
+      ${actionBlock}
       <details class="log-frame" ${task.status === "running" ? "open" : ""}>
+        <summary>查看日志</summary>
+        <pre class="task-log">${logs}</pre>
+      </details>
+    </article>
+  `;
+}
+
+function renderCancelledTasks(tasks) {
+  if (tasks.length === 0) {
+    elements.cancelledTasksPanel.hidden = true;
+    elements.cancelledTaskList.innerHTML = "";
+    return;
+  }
+
+  elements.cancelledTasksPanel.hidden = false;
+  elements.cancelledTaskList.innerHTML = tasks.map(renderCancelledTaskCard).join("");
+}
+
+function renderCancelledTaskCard(task) {
+  const logs = Array.isArray(task.logs) && task.logs.length > 0
+    ? escapeHtml(task.logs.join("\n"))
+    : "暂无日志输出。";
+  const observedAt = task.observed_at
+    ? formatDateTime(task.observed_at)
+    : "刚刚";
+
+  return `
+    <article class="task-card">
+      <div class="task-head">
+        <div>
+          <h3 class="task-title">${escapeHtml(task.image)}</h3>
+          <div class="task-meta">
+            <span>Task ID: ${escapeHtml(task.task_id)}</span>
+            <span>最近更新 ${escapeHtml(observedAt)}</span>
+          </div>
+        </div>
+        <span class="status-badge status-cancelled">cancelled</span>
+      </div>
+      <div class="task-actions">
+        <button class="secondary-button" type="button" data-delete-task-id="${escapeHtml(task.task_id)}">
+          删除记录
+        </button>
+      </div>
+      <details class="log-frame">
         <summary>查看日志</summary>
         <pre class="task-log">${logs}</pre>
       </details>
@@ -378,6 +452,71 @@ function bindImageActions() {
         await refreshImages();
       } catch (error) {
         pushToast("删除失败", error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+function bindTaskActions() {
+  document.querySelectorAll("[data-cancel-task-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const taskId = button.dataset.cancelTaskId || "";
+      const task = rootState.tasks.find((item) => item.task_id === taskId);
+      if (!taskId || !task) {
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `确认取消当前任务 ${task.image} 吗？系统会尝试终止 Docker 进程并删除本地镜像与未完成归档。`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      button.disabled = true;
+      try {
+        const response = await apiFetch(`/tasks/${encodeURIComponent(taskId)}/cancel`, {
+          method: "POST",
+        });
+        upsertTask({
+          ...response,
+          observed_at: new Date().toISOString(),
+        });
+        pushToast("任务已取消", `镜像 ${response.image} 已停止处理。`, "success");
+        await refreshImages();
+        renderTasks();
+      } catch (error) {
+        pushToast("取消失败", error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-delete-task-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const taskId = button.dataset.deleteTaskId || "";
+      if (!taskId) {
+        return;
+      }
+
+      const confirmed = window.confirm("确认删除这条已取消任务记录吗？");
+      if (!confirmed) {
+        return;
+      }
+
+      button.disabled = true;
+      try {
+        await apiFetch(`/tasks/${encodeURIComponent(taskId)}`, {
+          method: "DELETE",
+        });
+        removeTask(taskId);
+        renderTasks();
+        pushToast("记录已删除", `取消任务 ${taskId} 已从面板中移除。`, "success");
+      } catch (error) {
+        pushToast("删除记录失败", error.message, "error");
       } finally {
         button.disabled = false;
       }
