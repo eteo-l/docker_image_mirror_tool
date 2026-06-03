@@ -23,20 +23,6 @@
           面向运维工具的前端控制台。提交镜像拉取任务，实时查看执行日志，并管理已保存的 tar 归档。
         </p>
       </div>
-      <div class="hero-metrics">
-        <div class="metric-card">
-          <span class="metric-label">API 目标</span>
-          <strong id="api-endpoint">检测中</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">连接状态</span>
-          <strong id="connection-status">检测中</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">归档总量</span>
-          <strong id="archive-total-size">0 B</strong>
-        </div>
-      </div>
     </header>
 
     <main class="dashboard">
@@ -146,6 +132,10 @@
           <div>
             <strong id="archive-count">0</strong>
             <span> 个归档</span>
+          </div>
+          <div class="archive-usage-block">
+            <span class="subtle-text">归档总量</span>
+            <strong id="archive-total-size">0 B / 20 GiB</strong>
           </div>
           <div id="last-image-refresh" class="subtle-text">尚未刷新</div>
         </div>

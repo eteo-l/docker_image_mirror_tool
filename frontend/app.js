@@ -2,6 +2,7 @@ const TASK_STORAGE_KEY = "docker-mirror-recent-tasks";
 const MAX_STORED_TASKS = 12;
 const POLL_INTERVAL_MS = 2500;
 const TERMINAL_TASK_STATUSES = new Set(["success", "failed", "cancelled"]);
+const ARCHIVE_STORAGE_LIMIT_BYTES = 20 * 1024 * 1024 * 1024;
 
 const storedTaskState = loadStoredTasks();
 
@@ -17,8 +18,6 @@ const rootState = {
 };
 
 const elements = {
-  apiEndpoint: document.querySelector("#api-endpoint"),
-  connectionStatus: document.querySelector("#connection-status"),
   archiveTotalSize: document.querySelector("#archive-total-size"),
   archiveCount: document.querySelector("#archive-count"),
   lastImageRefresh: document.querySelector("#last-image-refresh"),
@@ -42,7 +41,6 @@ bootstrap();
 
 function bootstrap() {
   bindEvents();
-  renderApiTarget();
   renderTasks();
   renderImages();
   refreshAll();
@@ -144,19 +142,7 @@ function persistTasks() {
 }
 
 async function refreshAll() {
-  await Promise.allSettled([checkApiHealth(), refreshImages(), pollActiveTasks(true)]);
-}
-
-async function checkApiHealth() {
-  try {
-    await apiFetch("/");
-    elements.connectionStatus.textContent = "已连接";
-    elements.connectionStatus.className = "status-success";
-  } catch (error) {
-    elements.connectionStatus.textContent = "连接失败";
-    elements.connectionStatus.className = "status-failed";
-    pushToast("连接失败", error.message, "error");
-  }
+  await Promise.allSettled([refreshImages(), pollActiveTasks(true)]);
 }
 
 async function handlePullSubmit(event) {
@@ -305,10 +291,6 @@ function upsertTask(task) {
 function removeTask(taskId) {
   rootState.tasks = rootState.tasks.filter((item) => item.task_id !== taskId);
   persistTasks();
-}
-
-function renderApiTarget() {
-  elements.apiEndpoint.textContent = rootState.apiBaseUrl || window.location.origin;
 }
 
 function renderTasks() {
@@ -517,7 +499,7 @@ function renderImages() {
   const totalBytes = images.reduce((sum, item) => sum + Number(item.size_bytes || 0), 0);
 
   elements.archiveCount.textContent = String(images.length);
-  elements.archiveTotalSize.textContent = formatBytes(totalBytes);
+  elements.archiveTotalSize.textContent = `${formatBytes(totalBytes)} / ${formatBytes(ARCHIVE_STORAGE_LIMIT_BYTES)}`;
 
   if (images.length === 0) {
     elements.imageList.innerHTML = `
