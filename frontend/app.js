@@ -1,10 +1,15 @@
 const TASK_STORAGE_KEY = "docker-mirror-recent-tasks";
 const MAX_STORED_TASKS = 12;
 const POLL_INTERVAL_MS = 2500;
+const TERMINAL_TASK_STATUSES = new Set(["success", "failed", "cancelled"]);
+
+const storedTaskState = loadStoredTasks();
 
 const rootState = {
   apiBaseUrl: getApiBaseUrl(),
-  tasks: loadStoredTasks(),
+  tasks: storedTaskState.tasks,
+  nextTaskSequence: storedTaskState.nextTaskSequence,
+  nextTerminalSequence: storedTaskState.nextTerminalSequence,
   images: [],
   pollTimer: null,
   isSubmitting: false,
@@ -87,19 +92,47 @@ function loadStoredTasks() {
   try {
     const raw = window.localStorage.getItem(TASK_STORAGE_KEY);
     if (!raw) {
-      return [];
+      return {
+        tasks: [],
+        nextTaskSequence: 1,
+        nextTerminalSequence: 1,
+      };
     }
 
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
-      return [];
+      return {
+        tasks: [],
+        nextTaskSequence: 1,
+        nextTerminalSequence: 1,
+      };
     }
 
-    return parsed
+    const tasks = parsed
       .filter((item) => item && typeof item.task_id === "string" && typeof item.image === "string")
-      .slice(0, MAX_STORED_TASKS);
+      .slice(0, MAX_STORED_TASKS)
+      .map((item, index) => normalizeStoredTask(item, index + 1));
+
+    const nextTaskSequence = tasks.reduce(
+      (maxValue, task) => Math.max(maxValue, Number(task.clientSequence || 0)),
+      0,
+    ) + 1;
+    const nextTerminalSequence = tasks.reduce(
+      (maxValue, task) => Math.max(maxValue, Number(task.terminalSequence || 0)),
+      0,
+    ) + 1;
+
+    return {
+      tasks,
+      nextTaskSequence,
+      nextTerminalSequence,
+    };
   } catch {
-    return [];
+    return {
+      tasks: [],
+      nextTaskSequence: 1,
+      nextTerminalSequence: 1,
+    };
   }
 }
 
@@ -249,9 +282,23 @@ async function pollSingleTask(taskId, notifyOnError = true) {
 }
 
 function upsertTask(task) {
-  const nextTasks = rootState.tasks.filter((item) => item.task_id !== task.task_id);
-  nextTasks.unshift(task);
-  rootState.tasks = nextTasks.slice(0, MAX_STORED_TASKS);
+  const existingTask = rootState.tasks.find((item) => item.task_id === task.task_id);
+  const mergedTask = {
+    ...existingTask,
+    ...task,
+    clientSequence: existingTask?.clientSequence ?? allocateTaskSequence(),
+    terminalSequence: existingTask?.terminalSequence ?? null,
+  };
+
+  if (TERMINAL_TASK_STATUSES.has(mergedTask.status) && mergedTask.terminalSequence == null) {
+    mergedTask.terminalSequence = allocateTerminalSequence();
+  }
+
+  const nextTasks = existingTask
+    ? rootState.tasks.map((item) => (item.task_id === task.task_id ? mergedTask : item))
+    : [...rootState.tasks, mergedTask];
+
+  rootState.tasks = trimStoredTasks(nextTasks);
   persistTasks();
 }
 
@@ -265,8 +312,10 @@ function renderApiTarget() {
 }
 
 function renderTasks() {
-  const tasks = rootState.tasks.filter((task) => task.status !== "cancelled");
-  const cancelledTasks = rootState.tasks.filter((task) => task.status === "cancelled");
+  const tasks = getDisplayTasks(rootState.tasks.filter((task) => task.status !== "cancelled"));
+  const cancelledTasks = getCancelledDisplayTasks(
+    rootState.tasks.filter((task) => task.status === "cancelled"),
+  );
 
   elements.summaryTotal.textContent = String(tasks.length);
   elements.summaryRunning.textContent = String(
@@ -384,6 +433,83 @@ function renderCancelledTaskCard(task) {
       </details>
     </article>
   `;
+}
+
+function normalizeStoredTask(task, fallbackSequence) {
+  const normalizedTask = { ...task };
+  normalizedTask.clientSequence = Number(task.clientSequence || fallbackSequence);
+  normalizedTask.terminalSequence = task.terminalSequence == null
+    ? null
+    : Number(task.terminalSequence);
+  return normalizedTask;
+}
+
+function allocateTaskSequence() {
+  const nextValue = rootState.nextTaskSequence;
+  rootState.nextTaskSequence += 1;
+  return nextValue;
+}
+
+function allocateTerminalSequence() {
+  const nextValue = rootState.nextTerminalSequence;
+  rootState.nextTerminalSequence += 1;
+  return nextValue;
+}
+
+function trimStoredTasks(tasks) {
+  if (tasks.length <= MAX_STORED_TASKS) {
+    return tasks;
+  }
+
+  return [...tasks]
+    .sort((left, right) => getTaskRetentionScore(right) - getTaskRetentionScore(left))
+    .slice(0, MAX_STORED_TASKS)
+    .sort((left, right) => left.clientSequence - right.clientSequence);
+}
+
+function getTaskRetentionScore(task) {
+  if (task.status === "running") {
+    return 1000000 - task.clientSequence;
+  }
+
+  if (task.status === "pending") {
+    return 900000 - task.clientSequence;
+  }
+
+  return 100000 - (task.terminalSequence || task.clientSequence);
+}
+
+function getDisplayTasks(tasks) {
+  const runningTasks = tasks
+    .filter((task) => task.status === "running")
+    .sort(compareByClientSequence);
+  const pendingTasks = tasks
+    .filter((task) => task.status === "pending")
+    .sort(compareByClientSequence);
+  const completedTasks = tasks
+    .filter((task) => task.status !== "running" && task.status !== "pending")
+    .sort(compareByTerminalSequence);
+
+  return [...runningTasks, ...pendingTasks, ...completedTasks];
+}
+
+function getCancelledDisplayTasks(tasks) {
+  return [...tasks].sort(compareByTerminalSequence);
+}
+
+function compareByClientSequence(left, right) {
+  return left.clientSequence - right.clientSequence;
+}
+
+function compareByTerminalSequence(left, right) {
+  const leftSequence = left.terminalSequence ?? Number.MAX_SAFE_INTEGER;
+  const rightSequence = right.terminalSequence ?? Number.MAX_SAFE_INTEGER;
+
+  if (leftSequence !== rightSequence) {
+    return leftSequence - rightSequence;
+  }
+
+  return compareByClientSequence(left, right);
 }
 
 function renderImages() {
