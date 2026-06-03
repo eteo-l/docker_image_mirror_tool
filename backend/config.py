@@ -20,7 +20,7 @@ def _build_settings() -> Settings:
     download_chunk_size = int(os.getenv("DOWNLOAD_CHUNK_SIZE", str(1024 * 1024)))
     max_task_log_lines = int(os.getenv("MAX_TASK_LOG_LINES", "500"))
     archive_storage_limit_bytes = int(
-        os.getenv("ARCHIVE_STORAGE_LIMIT_BYTES", str(20 * 1024 * 1024 * 1024))
+        os.getenv("ARCHIVE_STORAGE_LIMIT_BYTES", str(10 * 1024 * 1024 * 1024))
     )
 
     return Settings(

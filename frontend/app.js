@@ -2,7 +2,7 @@ const TASK_STORAGE_KEY = "docker-mirror-recent-tasks";
 const MAX_STORED_TASKS = 12;
 const POLL_INTERVAL_MS = 2500;
 const TERMINAL_TASK_STATUSES = new Set(["success", "failed", "cancelled"]);
-const ARCHIVE_STORAGE_LIMIT_BYTES = 20 * 1024 * 1024 * 1024;
+const ARCHIVE_STORAGE_LIMIT_BYTES = 10 * 1024 * 1024 * 1024;
 
 const storedTaskState = loadStoredTasks();
 
