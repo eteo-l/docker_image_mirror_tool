@@ -369,6 +369,10 @@ a.ghost-button {
   gap: 14px;
 }
 
+.image-list {
+  margin-top: 12px;
+}
+
 .empty-state {
   padding: 28px 20px;
   border: 1px dashed rgba(255, 255, 255, 0.12);
