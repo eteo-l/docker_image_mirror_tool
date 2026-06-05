@@ -18,7 +18,7 @@ python -m http.server 4173
 
 ## Docker Packaging
 
-This project can be containerized. The main point is not the packaging itself, but which Docker daemon the backend talks to.
+This project can be containerized after decided which Docker daemon the backend talks to.
 
 ### Option 1: Isolated sidecar daemon (`docker-compose.dind.yml`)
 
@@ -57,7 +57,7 @@ Both compose examples set `CLEANUP_LOCAL_IMAGE_ON_CANCEL=false` by default.
 
 ## Docker 打包说明
 
-这个项目可以打包成 Docker 镜像运行。关键不在于能不能容器化，而在于后端最终连接的是哪个 Docker daemon。
+在打包这个项目为 Docker 镜像运行前，需要决定后端最终连接的是哪个 Docker daemon。
 
 ### 方案一：独立 sidecar daemon（`docker-compose.dind.yml`）
 
