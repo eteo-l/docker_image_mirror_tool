@@ -1,0 +1,38 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: deploy/docker/api.Dockerfile
+    environment:
+      IMAGE_STORAGE_DIR: /data/images
+      CLEANUP_LOCAL_IMAGE_ON_CANCEL: "false"
+      DOCKER_HOST: tcp://docker-daemon:2375
+    depends_on:
+      - docker-daemon
+    volumes:
+      - image_archives:/data/images
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/docker/web.Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+  docker-daemon:
+    image: docker:dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["--host=tcp://0.0.0.0:2375"]
+    volumes:
+      - docker_graph:/var/lib/docker
+    restart: unless-stopped
+
+volumes:
+  image_archives:
+  docker_graph:

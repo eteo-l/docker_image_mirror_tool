@@ -205,7 +205,7 @@ async def _pull_and_save_image(task: TaskRecord) -> None:
         task.status = "cancelled"
         task.error = None
         _append_log(task, str(exc))
-        await _remove_cancelled_local_image(task)
+        await _cleanup_after_cancellation(task)
     except InvalidImageNameError as exc:
         task.status = "failed"
         task.error = str(exc)
@@ -557,6 +557,18 @@ async def _remove_cancelled_local_image(task: TaskRecord) -> None:
             task,
             f"Docker executable '{settings.docker_binary}' was not found while removing the local image.",
         )
+
+
+async def _cleanup_after_cancellation(task: TaskRecord) -> None:
+    if not settings.cleanup_local_image_on_cancel:
+        _append_log(
+            task,
+            "Skipping local Docker image cleanup after cancellation because "
+            "CLEANUP_LOCAL_IMAGE_ON_CANCEL is disabled.",
+        )
+        return
+
+    await _remove_cancelled_local_image(task)
 
 
 def _image_to_filename_base(image: str) -> str:

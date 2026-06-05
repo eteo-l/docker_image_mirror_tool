@@ -70,12 +70,24 @@ function getApiBaseUrl() {
     return "http://127.0.0.1:8000";
   }
 
+  return "";
+}
+
+function getFallbackLocalApiBaseUrl() {
   const isLocalPreview = ["127.0.0.1", "localhost"].includes(window.location.hostname);
-  if (isLocalPreview && window.location.port !== "8000") {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  const isDefaultHttpPort = window.location.port === "" || window.location.port === "80";
+  const isDefaultHttpsPort = window.location.port === "443";
+
+  if (
+    !isLocalPreview ||
+    window.location.port === "8000" ||
+    isDefaultHttpPort ||
+    isDefaultHttpsPort
+  ) {
+    return "";
   }
 
-  return "";
+  return `${window.location.protocol}//${window.location.hostname}:8000`;
 }
 
 function normalizeApiBaseUrl(value) {
@@ -653,12 +665,27 @@ function getTaskStatusLabel(status) {
 }
 
 async function apiFetch(path, options = {}) {
-  const url = `${rootState.apiBaseUrl}${path}`;
-  const response = await window.fetch(url, options);
-  const contentType = response.headers.get("content-type") || "";
-  const payload = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
+  const primaryUrl = `${rootState.apiBaseUrl}${path}`;
+  let response;
+  let payload;
+
+  try {
+    ({ response, payload } = await performApiFetch(primaryUrl, options));
+  } catch (error) {
+    const fallbackBaseUrl = rootState.apiBaseUrl ? "" : getFallbackLocalApiBaseUrl();
+    if (!fallbackBaseUrl) {
+      throw error;
+    }
+
+    ({ response, payload } = await performApiFetch(`${fallbackBaseUrl}${path}`, options));
+  }
+
+  if (!response.ok) {
+    const fallbackBaseUrl = rootState.apiBaseUrl ? "" : getFallbackLocalApiBaseUrl();
+    if (fallbackBaseUrl && `${fallbackBaseUrl}${path}` !== primaryUrl) {
+      ({ response, payload } = await performApiFetch(`${fallbackBaseUrl}${path}`, options));
+    }
+  }
 
   if (!response.ok) {
     const detail = typeof payload === "string"
@@ -668,6 +695,16 @@ async function apiFetch(path, options = {}) {
   }
 
   return payload;
+}
+
+async function performApiFetch(url, options) {
+  const response = await window.fetch(url, options);
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
+
+  return { response, payload };
 }
 
 function formatBytes(sizeBytes) {
